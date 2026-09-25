@@ -1,0 +1,1138 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+<title>Карта событий Киева — прилёты, обломки, ПВО</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+<style>
+  :root {
+    --bg:#e8eef4; --panel:rgba(255,255,255,.95); --text:#1e293b; --muted:#64748b;
+    --danger:#dc2626; --warn:#d97706; --info:#0369a1; --debris:#92400e;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;width:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text)}
+  #map{position:absolute;inset:0;z-index:1}
+
+  .hud-top{position:absolute;top:8px;left:10px;right:10px;z-index:1000;
+    display:flex;flex-direction:column;gap:4px;pointer-events:none}
+  .hud-top>*{pointer-events:auto}
+
+  /* Панель событий за час */
+  .events-panel{
+    background:var(--panel);backdrop-filter:blur(12px);
+    border:1px solid rgba(148,163,184,.5);border-radius:10px;
+    box-shadow:0 4px 16px rgba(15,23,42,.15);
+    padding:8px 12px;max-width:520px;
+  }
+  .ep-title{font-size:.62rem;font-weight:800;letter-spacing:.05em;
+    text-transform:uppercase;color:var(--muted);margin-bottom:6px;
+    display:flex;justify-content:space-between;align-items:baseline}
+  .ep-title .ep-time{font-weight:600;color:#94a3b8;text-transform:none;letter-spacing:0}
+  .ep-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  .ep-cell{
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:5px 4px;border-radius:7px;background:#f1f5f9;
+    border:1px solid #cbd5e1;min-width:0;
+  }
+  .ep-cell .ico{font-size:1.1rem;line-height:1;margin-bottom:2px}
+  .ep-cell .num{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:1rem;font-weight:900;line-height:1}
+  .ep-cell .lbl{font-size:.5rem;color:var(--muted);text-transform:uppercase;
+    letter-spacing:.03em;margin-top:2px;text-align:center;line-height:1.05}
+  .ep-cell.impact {background:rgba(220,38,38,.1);border-color:#fca5a5}
+  .ep-cell.impact .num{color:#991b1b}
+  .ep-cell.debris {background:rgba(146,64,14,.1);border-color:#fbbf24}
+  .ep-cell.debris .num{color:#78350f}
+  .ep-cell.shootdown {background:rgba(3,105,161,.1);border-color:#7dd3fc}
+  .ep-cell.shootdown .num{color:#075985}
+  .ep-cell.pvo {background:rgba(234,179,8,.12);border-color:#fde047}
+  .ep-cell.pvo .num{color:#854d0e}
+  .ep-cell.empty .num{color:#cbd5e1;font-weight:600}
+  .ep-cell.empty .ico{opacity:.4}
+
+  /* Предупреждение о тривоге */
+  .alert-banner{
+    background:linear-gradient(90deg, rgba(254,226,226,.97), rgba(255,228,230,.97));
+    border:1px solid #f87171;color:#991b1b;
+    padding:4px 10px;border-radius:8px;
+    font-size:.7rem;font-weight:700;line-height:1.2;
+    display:none;align-items:center;gap:8px;max-width:520px;
+    box-shadow:0 2px 8px rgba(220,38,38,.15);
+  }
+  .alert-banner.show{display:flex}
+  .alert-banner .pulse-dot{width:8px;height:8px;border-radius:50%;background:#dc2626;
+    animation:pulse 1.2s ease-in-out infinite;flex-shrink:0}
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(1.3)}}
+  .alert-banner .ab-text{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  .hud-bottom{position:absolute;bottom:12px;left:10px;right:10px;z-index:1000;
+    display:flex;flex-direction:column;gap:6px;align-items:flex-start;pointer-events:none}
+  .hud-bottom>*{pointer-events:auto}
+  button{background:var(--panel);backdrop-filter:blur(10px);border:1px solid rgba(148,163,184,.5);
+    color:var(--text);padding:6px 12px;border-radius:8px;font-size:1rem;line-height:1;
+    cursor:pointer;box-shadow:0 2px 8px rgba(15,23,42,.12);font-weight:700}
+  button:active{background:#dbeafe}
+  .btn-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .attr{font-size:.6rem;color:var(--muted);line-height:1.35;background:var(--panel);
+    backdrop-filter:blur(10px);border:1px solid rgba(148,163,184,.5);border-radius:6px;
+    padding:4px 8px;max-width:100%}
+  .attr a{color:#2563eb;text-decoration:none}
+  .badge{font-size:.58rem;background:var(--panel);backdrop-filter:blur(10px);
+    border:1px solid rgba(148,163,184,.5);padding:3px 8px;border-radius:999px;color:var(--muted);
+    box-shadow:0 2px 8px rgba(15,23,42,.12)}
+  .badge.live{color:#16a34a;border-color:#86efac}
+  .badge.stale{color:#b45309;border-color:#fbbf24;background:#fef3c7}
+  .badge.ws{color:#0369a1;border-color:#7dd3fc;background:#e0f2fe}
+
+  /* Иконки событий */
+  .event-icon{width:36px;height:36px;display:flex;align-items:center;justify-content:center;
+    transform-origin:center center;position:relative}
+  .event-icon svg{width:32px;height:32px;display:block}
+  .event-icon.impact svg{filter:drop-shadow(0 0 6px rgba(220,38,38,.9));
+    animation:impactPulse 1.1s ease-in-out infinite}
+  @keyframes impactPulse{
+    0%,100%{transform:scale(1);filter:drop-shadow(0 0 6px rgba(220,38,38,.9))}
+    50%{transform:scale(1.15);filter:drop-shadow(0 0 18px rgba(220,38,38,1))}}
+  .event-icon.debris svg{filter:drop-shadow(0 0 5px rgba(146,64,14,.8));
+    animation:debrisPulse 1.6s ease-in-out infinite}
+  @keyframes debrisPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.06);opacity:.75}}
+  .event-icon.shootdown svg{filter:drop-shadow(0 0 5px rgba(3,105,161,.9));
+    animation:shootdownPulse 1.4s ease-in-out infinite}
+  @keyframes shootdownPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.08);opacity:.7}}
+  .event-icon.pvo svg{filter:drop-shadow(0 0 5px rgba(234,179,8,.9));
+    animation:pvoPulse 1.6s ease-in-out infinite}
+  @keyframes pvoPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.1);opacity:.7}}
+
+  .age-badge{position:absolute;left:50%;bottom:-14px;transform:translateX(-50%);
+    background:#1e293b;color:#f1f5f9;font-size:8.5px;font-weight:700;
+    padding:1px 6px;border-radius:4px;white-space:nowrap;
+    border:1px solid #475569;letter-spacing:.03em;pointer-events:none;
+    box-shadow:0 1px 3px rgba(0,0,0,.4)}
+  .confirm-badge{position:absolute;left:-6px;top:-6px;height:15px;min-width:15px;padding:0 4px;
+    border-radius:8px;background:#16a34a;color:#fff;font-size:9px;font-weight:900;
+    display:flex;align-items:center;justify-content:center;
+    border:1px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4);line-height:1}
+  .confirm-badge::before{content:"✓"}
+  .confirm-badge.low{background:#ca8a04}
+  .confirm-badge.pending{background:#0ea5e9}
+  .confirm-badge::before{content:""}
+  .confirm-badge.low::before,
+  .confirm-badge.pending::before{content:""}
+
+  /* Вопросительный маркер для нераспознанных событий (debug) */
+  .uncertain-icon{width:26px;height:26px;display:flex;align-items:center;justify-content:center;
+    background:#94a3b8;color:#fff;border-radius:50%;font-weight:900;font-size:14px;
+    border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35);opacity:.75}
+
+  .leaflet-popup-content-wrapper{background:#fff;color:var(--text);border-radius:12px;
+    box-shadow:0 8px 32px rgba(15,23,42,.2)}
+  .leaflet-popup-tip{background:#fff}
+  .leaflet-popup-content{margin:12px 14px;font-size:.85rem;line-height:1.45;max-width:320px}
+  .popup-title{font-weight:700;font-size:.95rem;margin-bottom:6px}
+  .popup-title.impact{color:#b91c1c}
+  .popup-title.debris{color:#78350f}
+  .popup-title.shootdown{color:#075985}
+  .popup-title.pvo{color:#854d0e}
+  .popup-meta{color:var(--muted);font-size:.75rem}
+  .popup-text{background:#f8fafc;border-left:3px solid #cbd5e1;
+    padding:6px 8px;border-radius:4px;margin:6px 0;font-size:.78rem;line-height:1.4;
+    color:#334155;font-style:italic;word-break:break-word}
+  .popup-channels{margin-top:6px;padding-top:6px;border-top:1px solid #e2e8f0;font-size:.7rem}
+  .popup-channels .ch{display:inline-block;background:#f1f5f9;color:#334155;
+    padding:1px 6px;border-radius:10px;margin:1px 3px 1px 0;border:1px solid #cbd5e1}
+  .popup-channels .ch.trusted{background:#dcfce7;border-color:#86efac;color:#166534}
+  .popup-channels .ch.suspicious{background:#fee2e2;border-color:#fca5a5;color:#991b1b}
+  .popup-vague{background:#fef3c7;color:#78350f;padding:5px 8px;border-radius:6px;
+    font-weight:600;font-size:.72rem;margin-top:6px;border:1px solid #fbbf24}
+
+  .vague-circle{
+    fill:rgba(220,38,38,.15);stroke:#dc2626;stroke-width:2;
+    stroke-dasharray:8 5;opacity:.85;pointer-events:none;
+    animation:vaguePulse 2s ease-in-out infinite}
+  @keyframes vaguePulse{0%,100%{opacity:.85}50%{opacity:.35}}
+  .vague-circle.pvo{fill:rgba(234,179,8,.15);stroke:#ca8a04}
+  .vague-circle.debris{fill:rgba(146,64,14,.15);stroke:#92400e}
+  .vague-circle.shootdown{fill:rgba(3,105,161,.15);stroke:#0369a1}
+
+  .zone-circle{fill:rgba(220,38,38,.03);stroke:#dc2626;stroke-width:1;
+    stroke-dasharray:4 6;opacity:.35;pointer-events:none}
+
+  .leaflet-control-zoom{margin-top:130px!important}
+  .leaflet-control-attribution{font-size:9px!important;background:rgba(255,255,255,.8)!important;color:#64748b!important}
+  .leaflet-control-attribution a{color:#2563eb!important}
+  .toast{position:absolute;left:50%;top:14px;transform:translateX(-50%);z-index:2000;
+    background:#1e293b;color:#f1f5f9;padding:10px 16px;border-radius:10px;
+    border:1px solid rgba(148,163,184,.4);font-size:.8rem;box-shadow:0 8px 24px rgba(0,0,0,.3);
+    opacity:0;transition:opacity .25s;pointer-events:none}
+  .toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="hud-top">
+  <div class="events-panel">
+    <div class="ep-title">
+      <span>События за час · Киев</span>
+      <span class="ep-time" id="epTime">—</span>
+    </div>
+    <div class="ep-grid">
+      <div class="ep-cell impact empty" id="cellImpact">
+        <div class="ico">💥</div><div class="num" id="cntImpact">0</div>
+        <div class="lbl">Взрывы<br>прилёты</div>
+      </div>
+      <div class="ep-cell debris empty" id="cellDebris">
+        <div class="ico">📍</div><div class="num" id="cntDebris">0</div>
+        <div class="lbl">Обломки<br>падения</div>
+      </div>
+      <div class="ep-cell shootdown empty" id="cellShoot">
+        <div class="ico">✈</div><div class="num" id="cntShoot">0</div>
+        <div class="lbl">Сбития<br>целей</div>
+      </div>
+      <div class="ep-cell pvo empty" id="cellPvo">
+        <div class="ico">🔊</div><div class="num" id="cntPvo">0</div>
+        <div class="lbl">Работа<br>ПВО</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="alert-banner" id="alertBanner">
+    <div class="pulse-dot"></div>
+    <div class="ab-text" id="alertBannerText">—</div>
+  </div>
+</div>
+
+<div class="hud-bottom">
+  <div class="btn-row">
+    <button type="button" id="btnRefresh" title="Обновить">↻</button>
+    <span class="badge" id="liveBadge">…</span>
+  </div>
+  <div class="attr">
+    Источник: сообщения каналов через <a href="https://neptun.in.ua/" target="_blank" rel="noopener">NEPTUN</a>.
+    Тайлы: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap</a>.
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+/* ============================================================
+   Карта событий Киева — v16
+   Только взрывы / прилёты / обломки / сбития / ПВО
+============================================================ */
+
+const CONFIG = {
+  API_ALERTS:   "https://neptun.in.ua/api/v1/alerts",
+  API_MESSAGES: "https://neptun.in.ua/api/v1/messages",
+  MESSAGES_POLL_MS: 5000,
+
+  KYIV: [50.45, 30.52],
+  KYIV_RADIUS_KM: 40,              // радиус «Киев и ближние сателлиты»
+  VAGUE_RADIUS_KM: 10,             // радиус круга для неточных
+
+  // Время жизни маркеров по типам (мс)
+  TTL_IMPACT:    60 * 60 * 1000,   // 1 час
+  TTL_DEBRIS:    60 * 60 * 1000,
+  TTL_SHOOTDOWN: 45 * 60 * 1000,
+  TTL_PVO:       30 * 60 * 1000,
+
+  // Подтверждение: минимум каналов и минимальный вес
+  MIN_CHANNELS: 1,
+  MIN_WEIGHT:   1.0,
+
+  DEBUG_PARSER: false,
+
+  TILE_URL: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+  TILE_ATTR: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+};
+
+/* ============================================================
+   Веса каналов
+============================================================ */
+const CHANNEL_WEIGHTS = {
+  "deraketaua": 2.0, "war_raketaua": 1.8, "monitorwarr": 1.8,
+  "ukrainar": 1.8, "ua_rockets": 1.5, "vibuxaviasia": 1.5,
+  "monitor_ukr": 1.5, "mon1tor_ua": 1.3, "radar_raketaa": 1.3,
+  "kpszsu": 1.5, "povitryana_rozvidka": 1.3, "zaxidniy_control": 1.3,
+  "veselyy_pivden": 1.2, "ukrainesradar": 1.3, "war_monitor": 1.2,
+  "Ukraine_UA_24_7": 1.3, "kiev_nebo": 1.2, "kievreal1": 1.1,
+  "kyiv_vanek": 1.1, "k_dvizh": 1.0, "kyiv_golovne": 1.2,
+  "avia_radar_info": 1.2, "kiev_levyy_bereg": 1.0, "kiev_tryvoha": 1.2,
+  "monikppy": 1.2, "vybuhy_bavovna": 1.3, "praviy_bereg_kiev": 1.0,
+  "operinform": 1.2, "kievinform_ua1": 1.0, "chernigov_chernigiv1": 1.1,
+  "kievinfo_kyiv": 1.1, "tryvoga_chomu": 1.0, "monitoringwarua": 1.3,
+  "chyste_nebo": 1.2, "monitoring_ukrainian": 1.2, "kyiv_oper": 1.1,
+  "monitor_war_ua": 1.2, "ukraine_24_7": 1.1,
+  "kgga_kiev": 2.2, "kyiv_ova": 2.2, "koda_gov_ua": 2.0,
+  "povitryani_syly": 2.5
+};
+function channelWeight(name) {
+  const k = (name||"").replace(/^@/,"").toLowerCase().trim();
+  if (CHANNEL_WEIGHTS[k] != null) return CHANNEL_WEIGHTS[k];
+  for (const [key, w] of Object.entries(CHANNEL_WEIGHTS)) if (k.includes(key)) return w;
+  return 1.0;
+}
+function channelClass(name) {
+  const w = channelWeight(name);
+  if (w >= 1.5) return "trusted";
+  if (w >= 1.0) return "";
+  return "suspicious";
+}
+
+/* ============================================================
+   Утилиты
+============================================================ */
+const $ = id => document.getElementById(id);
+const esc = s => (s||"").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+function showToast(msg, ms = 2400) {
+  const t = $("toast"); if (!t) return;
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(t._tm); t._tm = setTimeout(() => t.classList.remove("show"), ms);
+}
+function dbg(...a) { if (CONFIG.DEBUG_PARSER) console.log("[parser]", ...a); }
+
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371, toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2-lat1), dLon = toRad(lon2-lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+function isInKyivArea(lat, lon) {
+  if (lat == null || lon == null) return false;
+  return haversineKm(CONFIG.KYIV[0], CONFIG.KYIV[1], lat, lon) <= CONFIG.KYIV_RADIUS_KM;
+}
+function formatAge(ms) {
+  if (ms < 0) return "только что";
+  const s = Math.floor(ms/1000);
+  if (s < 60) return "только что";
+  const m = Math.floor(s/60);
+  if (m < 60) return m + " мин назад";
+  const h = Math.floor(m / 60);
+  return h + " ч назад";
+}
+
+/* ============================================================
+   НАСЕЛЁННЫЕ ПУНКТЫ КИЕВА (районы + микрорайоны + сателлиты)
+============================================================ */
+// Формат: [lat, lon, humanName]
+// Ключ — нормализованный (без апострофов, в нижнем регистре)
+const KYIV_PLACES = {
+  // Районы
+  "солом'янський район": [50.43, 30.48, "Солом'янський р-н"],
+  "солом'янський":       [50.43, 30.48, "Солом'янський"],
+  "соломенский район":   [50.43, 30.48, "Соломенский р-н"],
+  "соломенский":         [50.43, 30.48, "Соломенский"],
+  "дніпровський район":  [50.45, 30.60, "Дніпровський р-н"],
+  "дніпровський":        [50.45, 30.60, "Дніпровський"],
+  "днепровский район":   [50.45, 30.60, "Днепровский р-н"],
+  "днепровский":         [50.45, 30.60, "Днепровский"],
+  "подільський район":   [50.47, 30.52, "Подільський р-н"],
+  "подільський":         [50.47, 30.52, "Подільський"],
+  "подольский район":    [50.47, 30.52, "Подольский р-н"],
+  "подольский":          [50.47, 30.52, "Подольский"],
+  "оболонський район":   [50.52, 30.50, "Оболонський р-н"],
+  "оболонський":         [50.52, 30.50, "Оболонський"],
+  "оболонский район":    [50.52, 30.50, "Оболонский р-н"],
+  "оболонский":          [50.52, 30.50, "Оболонский"],
+  "печерський район":    [50.43, 30.54, "Печерський р-н"],
+  "печерський":          [50.43, 30.54, "Печерський"],
+  "печерский район":     [50.43, 30.54, "Печерский р-н"],
+  "печерский":           [50.43, 30.54, "Печерский"],
+  "шевченківський район":[50.46, 30.48, "Шевченківський р-н"],
+  "шевченківський":      [50.46, 30.48, "Шевченківський"],
+  "шевченковский район": [50.46, 30.48, "Шевченковский р-н"],
+  "шевченковский":       [50.46, 30.48, "Шевченковский"],
+  "голосіївський район": [50.39, 30.51, "Голосіївський р-н"],
+  "голосіївський":       [50.39, 30.51, "Голосіївський"],
+  "голосеевский район":  [50.39, 30.51, "Голосеевский р-н"],
+  "голосеевский":        [50.39, 30.51, "Голосеевский"],
+  "дарницький район":    [50.43, 30.65, "Дарницький р-н"],
+  "дарницький":          [50.43, 30.65, "Дарницький"],
+  "дарницкий район":     [50.43, 30.65, "Дарницкий р-н"],
+  "дарницкий":           [50.43, 30.65, "Дарницкий"],
+  "деснянський район":   [50.52, 30.60, "Деснянський р-н"],
+  "деснянський":         [50.52, 30.60, "Деснянський"],
+  "деснянский район":    [50.52, 30.60, "Деснянский р-н"],
+  "деснянский":          [50.52, 30.60, "Деснянский"],
+  "святошинський район": [50.46, 30.35, "Святошинський р-н"],
+  "святошинський":       [50.46, 30.35, "Святошинський"],
+  "святошинский район":  [50.46, 30.35, "Святошинский р-н"],
+  "святошинский":        [50.46, 30.35, "Святошинский"],
+
+  // Микрорайоны
+  "троєщина": [50.52, 30.58, "Троєщина"],
+  "троещина": [50.52, 30.58, "Троещина"],
+  "вигурівщина": [50.51, 30.60, "Вигурівщина"],
+  "выгуровщина": [50.51, 30.60, "Выгуровщина"],
+  "виноградар": [50.50, 30.42, "Виноградар"],
+  "оболонь": [50.52, 30.50, "Оболонь"],
+  "куреньовка": [50.49, 30.47, "Куренёвка"],
+  "куреневка": [50.49, 30.47, "Куренёвка"],
+  "приорка": [50.50, 30.46, "Приорка"],
+  "подол": [50.47, 30.52, "Поділ"],
+  "лук'янівка": [50.467, 30.465, "Лук'янівка"],
+  "лукьяновка": [50.467, 30.465, "Лукьяновка"],
+  "татарка": [50.470, 30.480, "Татарка"],
+  "сирець": [50.475, 30.425, "Сирець"],
+  "сырец": [50.475, 30.425, "Сырец"],
+  "нивки": [50.458, 30.405, "Нивки"],
+  "святошин": [50.46, 30.35, "Святошин"],
+  "академмістечко": [50.47, 30.36, "Академмістечко"],
+  "академгородок": [50.47, 30.36, "Академгородок"],
+  "борщагівка": [50.43, 30.40, "Борщагівка"],
+  "борщаговка": [50.43, 30.40, "Борщаговка"],
+  "солом'янка": [50.43, 30.48, "Солом'янка"],
+  "соломенка": [50.43, 30.48, "Соломенка"],
+  "жуляни": [50.395, 30.435, "Жуляни"],
+  "жуляны": [50.395, 30.435, "Жуляны"],
+  "голосіїв": [50.39, 30.51, "Голосіїв"],
+  "голосеево": [50.39, 30.51, "Голосеево"],
+  "деміївка": [50.395, 30.490, "Деміївка"],
+  "демиевка": [50.395, 30.490, "Демиевка"],
+  "мишоловка": [50.376, 30.505, "Мишоловка"],
+  "багринова гора": [50.365, 30.545, "Багринова гора"],
+  "печерськ": [50.43, 30.54, "Печерськ"],
+  "печерск": [50.43, 30.54, "Печерск"],
+  "звіринець": [50.420, 30.550, "Звіринець"],
+  "зверинец": [50.420, 30.550, "Зверинец"],
+  "байкова гора": [50.410, 30.520, "Байкова гора"],
+  "байкове": [50.405, 30.515, "Байкове"],
+  "видубичі": [50.408, 30.565, "Видубичі"],
+  "выдубичи": [50.408, 30.565, "Выдубичи"],
+  "корчувате": [50.380, 30.555, "Корчувате"],
+  "чапаевка": [50.375, 30.545, "Чапаевка"],
+  "пирогово": [50.355, 30.535, "Пирогово"],
+  "феофанія": [50.370, 30.475, "Феофанія"],
+  "феофания": [50.370, 30.475, "Феофания"],
+  "теремки": [50.37, 30.45, "Теремки"],
+  "дарниця": [50.43, 30.65, "Дарниця"],
+  "дврз": [50.428, 30.662, "ДВРЗ"],
+  "вишеньки": [50.398, 30.665, "Вишеньки"],
+  "бортничі": [50.395, 30.680, "Бортничі"],
+  "бортничи": [50.395, 30.680, "Бортничи"],
+  "осокорки": [50.39, 30.62, "Осокорки"],
+  "позняки": [50.41, 30.63, "Позняки"],
+  "харківський масив": [50.420, 30.650, "Харьковский массив"],
+  "харьковский массив": [50.420, 30.650, "Харьковский массив"],
+  "березняки": [50.435, 30.595, "Березняки"],
+  "русанівка": [50.443, 30.595, "Русанівка"],
+  "русановка": [50.443, 30.595, "Русановка"],
+  "лівобережна": [50.445, 30.615, "Лівобережна"],
+  "левобережная": [50.445, 30.615, "Левобережная"],
+  "райдужний": [50.478, 30.605, "Райдужний"],
+  "радужный": [50.478, 30.605, "Радужный"],
+  "воскресенка": [50.465, 30.605, "Воскресенка"],
+  "лісовий масив": [50.485, 30.605, "Лісовий масив"],
+  "лесной массив": [50.485, 30.605, "Лесной массив"],
+  "микільська слобідка": [50.455, 30.575, "Микільська слобідка"],
+  "куликово": [50.450, 30.590, "Куликово"],
+  "минский": [50.500, 30.420, "Минский"],
+  "миньский": [50.500, 30.420, "Минский"],
+
+  // Инфраструктура
+  "кпі": [50.449, 30.456, "КПІ"],
+  "тец-4": [50.428, 30.372, "ТЭЦ-4"],
+  "тэц-4": [50.428, 30.372, "ТЭЦ-4"],
+  "тец-5": [50.412, 30.528, "ТЭЦ-5"],
+  "тэц-5": [50.412, 30.528, "ТЭЦ-5"],
+  "тец-6": [50.520, 30.618, "ТЭЦ-6"],
+  "тэц-6": [50.520, 30.618, "ТЭЦ-6"],
+  "жуляни": [50.395, 30.435, "Жуляны"],
+  "хрещатик": [50.448, 30.522, "Хрещатик"],
+  "майдан незалежності": [50.450, 30.523, "Майдан Незалежності"],
+  "майдан": [50.450, 30.523, "Майдан"],
+
+  // Сателіти
+  "ірпінь": [50.52, 30.25, "Ірпінь"],
+  "ирпень": [50.52, 30.25, "Ирпень"],
+  "буча": [50.55, 30.22, "Буча"],
+  "гостомель": [50.57, 30.27, "Гостомель"],
+  "вишгород": [50.58, 30.49, "Вишгород"],
+  "бровари": [50.51, 30.79, "Бровари"],
+  "бровары": [50.51, 30.79, "Бровары"],
+  "бориспіль": [50.35, 30.95, "Бориспіль"],
+  "борисполь": [50.35, 30.95, "Борисполь"],
+  "вишневе": [50.39, 30.37, "Вишневе"],
+  "вишневое": [50.39, 30.37, "Вишневое"],
+  "софіївська борщагівка": [50.42, 30.33, "Софиевская Борщаговка"],
+  "петропавлівська борщагівка": [50.42, 30.32, "Петропавловская Борщаговка"],
+  "коцюбинське": [50.488, 30.335, "Коцюбинське"],
+  "коцюбинское": [50.488, 30.335, "Коцюбинское"],
+  "васильків": [50.18, 30.32, "Васильків"],
+  "васильков": [50.18, 30.32, "Васильков"],
+  "українка": [50.15, 30.74, "Українка"],
+  "украинка": [50.15, 30.74, "Украинка"],
+  "обухів": [50.11, 30.62, "Обухів"],
+  "обухов": [50.11, 30.62, "Обухов"],
+  "вишгород": [50.58, 30.49, "Вишгород"],
+  "десна": [50.52, 30.62, "Десна"]
+};
+
+// Ключи, отсортированные по длине (для приоритета длинных совпадений)
+const PLACE_KEYS_BY_LEN = Object.keys(KYIV_PLACES).sort((a,b) => b.length - a.length);
+
+/* ============================================================
+   Нормализация текста (апострофы, дефисы)
+============================================================ */
+function normalizeText(text) {
+  if (!text) return "";
+  return text
+    .toLowerCase()
+    .replace(/[\u2019\u02BC\u2018\u02BB'`´]/g, "'") // разные апострофы → обычный
+    .replace(/[\u2013\u2014]/g, "-")                  // длинные тире → дефис
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/* ============================================================
+   Поиск места в тексте (по нормализованному тексту)
+============================================================ */
+function findKyivPlace(text) {
+  if (!text) return null;
+  const norm = normalizeText(text);
+  for (const key of PLACE_KEYS_BY_LEN) {
+    const idx = norm.indexOf(key);
+    if (idx >= 0) {
+      const [lat, lon, name] = KYIV_PLACES[key];
+      return { key, name, lat, lon, index: idx, length: key.length };
+    }
+  }
+  return null;
+}
+
+/* ============================================================
+   Признаки «в Киеве / в столице / Киевская область»
+============================================================ */
+const KYIV_CITY_RE = /(^|[^а-яіїєґa-z])(києв|киев|kyiv|київ|столиц|столичн)/i;
+const KYIV_OBLAST_RE = /(київськ|киевск|київщин|киевщин)/i;
+
+function mentionsKyivCity(text) {
+  return KYIV_CITY_RE.test(text || "");
+}
+function mentionsKyivOblast(text) {
+  return KYIV_OBLAST_RE.test(text || "");
+}
+
+/* ============================================================
+   Регулярки событий
+============================================================ */
+
+// ВЗРЫВ / ПРИЛЁТ / ПОПАДАНИЕ
+const IMPACT_RE = new RegExp([
+  "прил[іi]т", "прилет", "влучан", "влучил", "попадан",
+  "\\bвибух", "\\bвзрыв", "\\bбахнул", "\\bбахнуло",
+  "удар\\s+по\\s+", "удар\\s+в\\s+",
+  "здетонував", "сдетонировал",
+  "зруйнован", "разрушен", "пошкоджен", "поврежден",
+  "загорянн", "пожеж", "пожар",
+  "вибух", "взрыв"
+].join("|"), "i");
+
+// ОБЛОМКИ
+const DEBRIS_RE = new RegExp([
+  "обломк", "уламк", "осколк", "фрагмент", "рештк", "остатк",
+  "падінн[яе]\\s+уламк", "паден[ие]\\s+обломк",
+  "уламк[иі]\\s+впал", "обломк[иі]\\s+упал",
+  "уламк[иі]\\s+пад", "обломк[иі]\\s+пад",
+  "залетів\\s+уламок", "залетел\\s+обломок"
+].join("|"), "i");
+
+// СБИТИЕ
+const SHOOTDOWN_RE = new RegExp([
+  "\\bзбит", "\\bсбит",
+  "мінус\\s+один", "минус\\s+один",
+  "ліквідован", "ликвидирован",
+  "успішно\\s+збит", "успешно\\s+сбит",
+  "знищен[оа]\\s+в\\s+повітр", "уничтожен[оа]\\s+в\\s+воздух"
+].join("|"), "i");
+
+// РАБОТА ПВО
+const PVO_RE = new RegExp([
+  "работа\\s+пво", "работает\\s+пво",
+  "працює\\s+ппо", "працює\\s+пво",
+  "работа\\s+ппо", "работает\\s+ппо",
+  "працювала\\s+пво", "работала\\s+пво",
+  "працює\\s+ппо", "работает\\s+ппо",
+  "\\bзенитн", "\\bзенітн",
+  "пво\\s+працю", "ппо\\s+працю",
+  "стріляють\\s+з\\s+пво", "стреляют\\s+из\\s+пво",
+  "активна\\s+робота\\s+пво", "активная\\s+работа\\s+пво"
+].join("|"), "i");
+
+// Исключения (фейки, обучение, отбой)
+const NO_LAUNCH_RE = /без\s+пуск|без\s+запуск|не\s+було\s+пуск|поки\s+що\s+без|поки\s+без|не\s+спостеріга|не\s+наблюда|без\s+бойових\s+ознак|без\s+боевых\s+признак|очікуємо\s+відбій|очікуємо\s+отбой|\bвідбій\b|\bотбой\b|тренувальн|навчальн|учбов|учебн|не\s+підтверджен|не\s+подтвержден|скасован|отменен|відмінено/i;
+const NON_AIR_CONTEXT_RE = /диверс|партизан|АТЕШ|атеш|саботаж|підпал|поджог|електропідстанц|электроподстанц|боєць|боец\b|батальйон|батальон|бригад/i;
+
+/* ============================================================
+   Извлечение события из текста
+============================================================ */
+function extractEvent(text) {
+  if (!text) return null;
+  const raw = text;
+  if (NON_AIR_CONTEXT_RE.test(raw)) return null;
+  if (NO_LAUNCH_RE.test(raw)) return null;
+
+  const place = findKyivPlace(raw);
+  const inKyivCity = mentionsKyivCity(raw);
+  const inKyivOblast = mentionsKyivOblast(raw);
+
+  // Порядок проверки: обломки → сбитие → ПВО → взрыв (самый широкий)
+
+  // 1) ОБЛОМКИ
+  if (DEBRIS_RE.test(raw)) {
+    if (place && isInKyivArea(place.lat, place.lon)) {
+      return { kind: "debris", place, precise: true };
+    }
+    if (!place && inKyivCity) {
+      return { kind: "debris", place: { key: "__kyiv__", name: "Київ (без уточнення)", lat: CONFIG.KYIV[0], lon: CONFIG.KYIV[1] }, vague: true };
+    }
+    if (!place && inKyivOblast) {
+      return { kind: "debris", place: { key: "__kyivobl__", name: "Київська обл.", lat: 50.20, lon: 30.30 }, vague: true };
+    }
+    return null;
+  }
+
+  // 2) СБИТИЕ
+  if (SHOOTDOWN_RE.test(raw)) {
+    if (place && isInKyivArea(place.lat, place.lon)) {
+      return { kind: "shootdown", place, precise: true };
+    }
+    if (!place && inKyivCity) {
+      return { kind: "shootdown", place: { key: "__kyiv__", name: "Київ (без уточнення)", lat: CONFIG.KYIV[0], lon: CONFIG.KYIV[1] }, vague: true };
+    }
+    return null;
+  }
+
+  // 3) РАБОТА ПВО
+  if (PVO_RE.test(raw)) {
+    if (place && isInKyivArea(place.lat, place.lon)) {
+      return { kind: "pvo", place, precise: true };
+    }
+    if (!place && inKyivCity) {
+      return { kind: "pvo", place: { key: "__kyiv__", name: "Київ (без уточнення)", lat: CONFIG.KYIV[0], lon: CONFIG.KYIV[1] }, vague: true };
+    }
+    if (!place && inKyivOblast) {
+      return { kind: "pvo", place: { key: "__kyivobl__", name: "Київська обл.", lat: 50.20, lon: 30.30 }, vague: true };
+    }
+    return null;
+  }
+
+  // 4) ВЗРЫВ / ПРИЛЁТ / ПОПАДАНИЕ
+  if (IMPACT_RE.test(raw)) {
+    if (place && isInKyivArea(place.lat, place.lon)) {
+      return { kind: "impact", place, precise: true };
+    }
+    if (!place && inKyivCity) {
+      return { kind: "impact", place: { key: "__kyiv__", name: "Київ (без уточнення)", lat: CONFIG.KYIV[0], lon: CONFIG.KYIV[1] }, vague: true };
+    }
+    if (!place && inKyivOblast) {
+      return { kind: "impact", place: { key: "__kyivobl__", name: "Київська обл.", lat: 50.20, lon: 30.30 }, vague: true };
+    }
+    return null;
+  }
+
+  return null;
+}
+
+/* ============================================================
+   Карта
+============================================================ */
+const map = L.map("map", {
+  center: CONFIG.KYIV, zoom: 10, zoomControl: true, attributionControl: true
+});
+L.tileLayer(CONFIG.TILE_URL, { maxZoom: 19, attribution: CONFIG.TILE_ATTR }).addTo(map);
+
+const zoneCircle = L.circle(CONFIG.KYIV, {
+  radius: CONFIG.KYIV_RADIUS_KM * 1000,
+  className: "zone-circle", interactive: false
+}).addTo(map);
+
+const alertLayer      = L.layerGroup().addTo(map);
+const eventLayer      = L.layerGroup().addTo(map);
+const vagueLayer      = L.layerGroup().addTo(map);
+
+/* ============================================================
+   SVG-иконки событий
+============================================================ */
+function impactSvg() {
+  return `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="20" cy="20" r="10" fill="#dc2626" stroke="#7f1d1d" stroke-width="1.8"/>
+    <circle cx="20" cy="20" r="4" fill="#fbbf24" stroke="#b45309" stroke-width="0.8"/>
+    <g stroke="#b91c1c" stroke-width="2.6" stroke-linecap="round">
+      <line x1="20" y1="2"  x2="20" y2="9"/>
+      <line x1="20" y1="31" x2="20" y2="38"/>
+      <line x1="2"  y1="20" x2="9"  y2="20"/>
+      <line x1="31" y1="20" x2="38" y2="20"/>
+      <line x1="7"  y1="7"  x2="12" y2="12"/>
+      <line x1="28" y1="28" x2="33" y2="33"/>
+      <line x1="33" y1="7"  x2="28" y2="12"/>
+      <line x1="12" y1="28" x2="7"  y2="33"/>
+    </g>
+  </svg>`;
+}
+function debrisSvg() {
+  return `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="20" cy="22" r="15" fill="rgba(146,64,14,.2)" stroke="#92400e" stroke-width="1.5"/>
+    <path d="M10 24 L16 13 L20 20 L25 11 L29 21 L33 26 L24 29 L14 31 Z"
+          fill="#b45309" stroke="#78350f" stroke-width="1.4" stroke-linejoin="round"/>
+    <circle cx="20" cy="22" r="2.6" fill="#fef3c7" stroke="#78350f" stroke-width="0.8"/>
+  </svg>`;
+}
+function shootdownSvg() {
+  return `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="20" cy="20" r="15" fill="rgba(3,105,161,.15)" stroke="#0369a1" stroke-width="1.6"/>
+    <path d="M12 20 L20 13 L28 20 L22 20 L22 29 L18 29 L18 20 Z"
+          fill="#0369a1" stroke="#0c4a6e" stroke-width="1.3" stroke-linejoin="round"/>
+    <line x1="8" y1="8" x2="32" y2="32" stroke="#dc2626" stroke-width="2.8" stroke-linecap="round"/>
+    <line x1="32" y1="8" x2="8" y2="32" stroke="#dc2626" stroke-width="2.8" stroke-linecap="round"/>
+  </svg>`;
+}
+function pvoSvg() {
+  return `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="20" cy="20" r="16" fill="rgba(234,179,8,.18)" stroke="#ca8a04" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <circle cx="20" cy="20" r="10" fill="rgba(234,179,8,.3)" stroke="#eab308" stroke-width="1.5"/>
+    <path d="M14 16 L20 10 L26 16 L23 16 L23 26 L17 26 L17 16 Z"
+          fill="#eab308" stroke="#854d0e" stroke-width="1.3" stroke-linejoin="round"/>
+    <circle cx="20" cy="20" r="2" fill="#fff" stroke="#854d0e" stroke-width="0.8"/>
+  </svg>`;
+}
+
+const EVENT_META = {
+  impact:    { svg: impactSvg,    title: "💥 Взрыв / прилёт / попадание" },
+  debris:    { svg: debrisSvg,    title: "📍 Обломки / падение" },
+  shootdown: { svg: shootdownSvg, title: "✈ Сбитие цели" },
+  pvo:       { svg: pvoSvg,       title: "🔊 Работа ПВО" }
+};
+
+function eventIcon(kind, confirmN, eventAt) {
+  const meta = EVENT_META[kind];
+  if (!meta) return null;
+  const svg = meta.svg();
+  const ageHtml = eventAt ? `<div class="age-badge">${formatAge(Date.now() - eventAt)}</div>` : "";
+  const confirmHtml = confirmN >= 2
+    ? `<div class="confirm-badge">${confirmN}</div>` : "";
+  return L.divIcon({
+    className: "",
+    html: `<div style="position:relative;width:36px;height:36px">
+      <div class="event-icon ${kind}" style="position:absolute;inset:0">${svg}</div>
+      ${confirmHtml}${ageHtml}
+    </div>`,
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
+    popupAnchor: [0, -18]
+  });
+}
+
+function eventPopupHtml(kind, place, channelsSet, confirmN, eventAt, sampleText, vague) {
+  const meta = EVENT_META[kind];
+  const age = eventAt ? formatAge(Date.now() - eventAt) : "только что";
+  const chItems = [...channelsSet].map(ch => {
+    const cls = channelClass(ch);
+    return `<span class="ch ${cls}">${esc(ch)}</span>`;
+  }).join(" ");
+  const vagueNote = vague
+    ? `<div class="popup-vague">≈ Точное место не указано · район/город назван без деталей. Показан радиус ${CONFIG.VAGUE_RADIUS_KM} км вокруг центра.</div>`
+    : "";
+  return `
+    <div class="popup-title ${kind}">${meta.title}</div>
+    <div class="popup-text">${esc((sampleText || "").slice(0, 300))}</div>
+    <div class="popup-meta">
+      <b>${esc(place.name || "—")}</b><br>
+      Когда: <b>${age}</b><br>
+      Подтверждений: <b>${confirmN}</b> канал(ов)
+    </div>
+    ${vagueNote}
+    ${chItems ? `<div class="popup-channels"><b>Источники:</b><br>${chItems}</div>` : ""}
+  `;
+}
+
+/* ============================================================
+   События
+============================================================ */
+const eventMarkers = new Map();   // key -> { marker, circle, kind, eventAt, lastSeen, channels, ... }
+const hourlyStat = { impact: [], debris: [], shootdown: [], pvo: [] };
+
+function recordHourly(kind, ts) {
+  if (hourlyStat[kind]) hourlyStat[kind].push(ts);
+}
+function pruneHourly() {
+  const cutoff = Date.now() - 3600000;
+  for (const k of Object.keys(hourlyStat)) {
+    hourlyStat[k] = hourlyStat[k].filter(ts => ts >= cutoff);
+  }
+}
+function updateHourlyPanel() {
+  pruneHourly();
+  const now = new Date();
+  const t = $("epTime");
+  if (t) t.textContent = now.toTimeString().slice(0,5);
+
+  const map = [
+    ["impact",    "cntImpact", "cellImpact"],
+    ["debris",    "cntDebris", "cellDebris"],
+    ["shootdown", "cntShoot",  "cellShoot"],
+    ["pvo",       "cntPvo",    "cellPvo"]
+  ];
+  for (const [kind, numId, cellId] of map) {
+    const n = hourlyStat[kind].length;
+    const numEl = $(numId);
+    const cellEl = $(cellId);
+    if (numEl) numEl.textContent = n;
+    if (cellEl) cellEl.classList.toggle("empty", n === 0);
+  }
+}
+
+/* ============================================================
+   Тревоги (оставляем тонкий контур — это тоже событие)
+============================================================ */
+const GeoIndex = {
+  raionMap: null, oblastMap: null,
+  build(geojson, targetMap) {
+    const m = new Map();
+    for (const f of (geojson?.features || [])) {
+      const k = String(f.properties?.key || "").toLowerCase().trim();
+      if (k) m.set(k, f);
+    }
+    targetMap(m);
+  },
+  find(key) {
+    if (!key) return null;
+    const k = String(key).toLowerCase().trim();
+    if (this.raionMap?.has(k)) return this.raionMap.get(k);
+    if (this.oblastMap?.has(k)) return this.oblastMap.get(k);
+    for (const [pk, f] of (this.raionMap || [])) if (k.endsWith(":"+pk) || k.includes(pk)) return f;
+    for (const [pk, f] of (this.oblastMap || [])) if (k.endsWith(":"+pk) || k.includes(pk)) return f;
+    return null;
+  }
+};
+let lastAlerts = null;
+async function loadAlertGeo(signal) {
+  try {
+    const [r, o] = await Promise.all([
+      fetch("https://neptun.in.ua/raions.geojson", { signal }).then(x => x.json()),
+      fetch("https://neptun.in.ua/oblasts.geojson", { signal }).then(x => x.json())
+    ]);
+    GeoIndex.build(r, m => GeoIndex.raionMap = m);
+    GeoIndex.build(o, m => GeoIndex.oblastMap = m);
+    if (lastAlerts) syncAlertPolygons(lastAlerts);
+  } catch (e) { if (e.name !== "AbortError") console.warn("alert geojson", e); }
+}
+const alertPolygons = new Map();
+function alertStyle(level) {
+  const lv = (level || "red").toLowerCase();
+  if (lv === "yellow" || lv === "orange") {
+    return { color:"#ca8a04", weight:1, opacity:.55, fillColor:"#eab308", fillOpacity:.12 };
+  }
+  return { color:"#dc2626", weight:1, opacity:.5, fillColor:"#ef4444", fillOpacity:.10 };
+}
+function syncAlertPolygons(alerts) {
+  if (!alerts) return;
+  lastAlerts = alerts;
+  if (!GeoIndex.raionMap && !GeoIndex.oblastMap) return;
+  const active = new Map();
+  for (const a of (alerts.raions || [])) {
+    const k = a.key || a.name;
+    if (k) active.set(String(k).toLowerCase(), { level: a.level || "red", name: a.name });
+  }
+  for (const a of (alerts.oblasts || [])) {
+    const k = a.key || a.name;
+    if (k) active.set(String(k).toLowerCase(), { level: a.level || "red", name: a.name });
+  }
+  for (const [k, layer] of [...alertPolygons]) {
+    if (!active.has(k)) { alertLayer.removeLayer(layer); alertPolygons.delete(k); }
+  }
+  for (const [k, info] of active) {
+    const feat = GeoIndex.find(k);
+    if (!feat) continue;
+    const style = alertStyle(info.level);
+    const title = info.name || k;
+    if (alertPolygons.has(k)) {
+      alertPolygons.get(k).setStyle(style);
+    } else {
+      const layer = L.geoJSON(feat, { style });
+      layer.bindPopup(`<b>${esc(title)}</b><br>Тревога: <span style="color:${(info.level==="yellow"||info.level==="orange")?"#ca8a04":"#dc2626"}">${(info.level==="yellow"||info.level==="orange")?"жёлтая":"красная"}</span>`);
+      layer.addTo(alertLayer);
+      alertPolygons.set(k, layer);
+    }
+  }
+}
+
+/* ============================================================
+   Баннер тревоги
+============================================================ */
+const KYIV_ALERT_RE = /київ(?!ськ)|киев(?!ск)|kyiv(?!sk)/i;
+function detectKyivAlert() {
+  if (!lastAlerts) return false;
+  for (const list of [lastAlerts.raions, lastAlerts.oblasts]) {
+    for (const a of (list || [])) {
+      const s = String(a.key || "") + " " + String(a.name || "");
+      if (KYIV_ALERT_RE.test(s)) return true;
+    }
+  }
+  return false;
+}
+function updateAlertBanner() {
+  const banner = $("alertBanner");
+  const txt = $("alertBannerText");
+  if (!banner || !txt) return;
+  if (detectKyivAlert()) {
+    banner.classList.add("show");
+    txt.textContent = "Тревога в Киеве и области";
+  } else {
+    banner.classList.remove("show");
+  }
+}
+
+/* ============================================================
+   Парсер сообщений
+============================================================ */
+let savedMessages = null;
+
+function syncMessages(messages) {
+  const now = Date.now();
+  const candidates = new Map();
+
+  for (let i = 0; i < (messages||[]).length; i++) {
+    const m = messages[i];
+    const text = m.text || "";
+    if (!text) continue;
+    const ch = (m.channel || "unknown").replace(/^@/, "").toLowerCase();
+    const msgMs = m.date ? Date.parse(m.date) : now;
+
+    const evt = extractEvent(text);
+    if (!evt) continue;
+
+    const key = `${evt.kind}|${evt.place.key}`;
+    if (!candidates.has(key)) {
+      candidates.set(key, {
+        kind: evt.kind,
+        place: evt.place,
+        precise: !!evt.precise,
+        vague: !!evt.vague,
+        channels: new Set(),
+        eventAt: null,
+        lastSeen: msgMs,
+        sampleText: text
+      });
+    }
+    const c = candidates.get(key);
+    c.channels.add(ch);
+    if (msgMs > c.lastSeen) c.lastSeen = msgMs;
+    if (text.length < c.sampleText.length) c.sampleText = text;
+
+    // Время события: пробуем вытащить из текста
+    const timeInText = extractEventTimeFromText(text, m.date);
+    if (timeInText && (!c.eventAt || timeInText > c.eventAt)) c.eventAt = timeInText;
+  }
+
+  // Отрисовка
+  const seenKeys = new Set();
+  for (const [key, c] of candidates) {
+    const confirmN = c.channels.size;
+    const totalW = [...c.channels].reduce((s, ch) => s + channelWeight(ch), 0);
+
+    // Пороги
+    if (confirmN < CONFIG.MIN_CHANNELS) continue;
+    if (totalW < CONFIG.MIN_WEIGHT) continue;
+
+    const eventAt = c.eventAt || c.lastSeen;
+    const age = now - eventAt;
+    const ttl = {
+      impact:    CONFIG.TTL_IMPACT,
+      debris:    CONFIG.TTL_DEBRIS,
+      shootdown: CONFIG.TTL_SHOOTDOWN,
+      pvo:       CONFIG.TTL_PVO
+    }[c.kind] || CONFIG.TTL_IMPACT;
+
+    if (age > ttl) {
+      if (eventMarkers.has(key)) {
+        const em = eventMarkers.get(key);
+        if (em.marker) eventLayer.removeLayer(em.marker);
+        if (em.circle) vagueLayer.removeLayer(em.circle);
+        eventMarkers.delete(key);
+      }
+      continue;
+    }
+
+    seenKeys.add(key);
+
+    const marker = L.marker([c.place.lat, c.place.lon], {
+      icon: eventIcon(c.kind, confirmN, eventAt),
+      zIndexOffset: 900
+    });
+    marker.bindPopup(eventPopupHtml(c.kind, c.place, c.channels, confirmN, eventAt, c.sampleText, c.vague));
+    marker.addTo(eventLayer);
+
+    let circle = null;
+    if (c.vague) {
+      circle = L.circle([c.place.lat, c.place.lon], {
+        radius: CONFIG.VAGUE_RADIUS_KM * 1000,
+        className: `vague-circle ${c.kind}`,
+        interactive: false
+      }).addTo(vagueLayer);
+    }
+
+    if (eventMarkers.has(key)) {
+      const old = eventMarkers.get(key);
+      if (old.marker) eventLayer.removeLayer(old.marker);
+      if (old.circle) vagueLayer.removeLayer(old.circle);
+    }
+    eventMarkers.set(key, {
+      marker, circle, kind: c.kind, eventAt, lastSeen: c.lastSeen,
+      confirmN, channels: c.channels    });
+
+    // Отмечаем в часовой сводке (только при первом появлении ключа)
+    if (!recordedKeys.has(key)) {
+      recordedKeys.add(key);
+      recordHourly(c.kind, eventAt);
+    }
+  }
+
+  // Чистка устаревших
+  for (const [key, o] of [...eventMarkers]) {
+    const ttl = {
+      impact:    CONFIG.TTL_IMPACT,
+      debris:    CONFIG.TTL_DEBRIS,
+      shootdown: CONFIG.TTL_SHOOTDOWN,
+      pvo:       CONFIG.TTL_PVO
+    }[o.kind] || CONFIG.TTL_IMPACT;
+    if (now - (o.eventAt || o.lastSeen) > ttl) {
+      if (o.marker) eventLayer.removeLayer(o.marker);
+      if (o.circle) vagueLayer.removeLayer(o.circle);
+      eventMarkers.delete(key);
+      recordedKeys.delete(key);
+    }
+  }
+
+  updateHourlyPanel();
+}
+
+// Какие ключи уже попали в сводку (чтобы не дублировать)
+const recordedKeys = new Set();
+
+/* ============================================================
+   Извлечение времени события из текста
+============================================================ */
+function extractEventTimeFromText(text, msgDate) {
+  if (!text) return null;
+  const msgMs = msgDate ? Date.parse(msgDate) : null;
+  const now = Date.now();
+  const base = msgMs || now;
+
+  // «в 04:32»
+  let m = text.match(/(?:^|\s|[оавОАВуУ])\s*(\d{1,2}):(\d{2})(?:\s|$|,|\.|\))/);
+  if (m) {
+    const hh = parseInt(m[1], 10), mm = parseInt(m[2], 10);
+    if (hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) {
+      const d = new Date(base);
+      d.setHours(hh, mm, 0, 0);
+      if (d.getTime() > base + 5 * 60 * 1000) d.setDate(d.getDate() - 1);
+      return d.getTime();
+    }
+  }
+  // «5 минут назад»
+  m = text.match(/(\d{1,3})\s*(?:хв(?:илин[уи]?)?|мин(?:ут[уы]?)?|min)\s*(?:назад|тому|раніше|ранее)/i);
+  if (m) return base - parseInt(m[1],10) * 60 * 1000;
+  // «1 час назад»
+  m = text.match(/(\d{1,2})\s*(?:час(?:ов|а|у|и)?|год(?:ин[уи]?)?|годин[уи]?)\s*(?:назад|тому|раніше|ранее)/i);
+  if (m) return base - parseInt(m[1],10) * 3600 * 1000;
+  if (/щойно|тільки\s+що|только\s+что|прямо\s+зараз/i.test(text)) return base;
+  return null;
+}
+
+/* ============================================================
+   Сеть
+============================================================ */
+let pollTimer = null;
+let abortCtrl = null;
+let backoffMs = 0;
+
+async function fetchAlerts() {
+  try {
+    if (abortCtrl) abortCtrl.abort();
+    abortCtrl = new AbortController();
+    const r = await fetch(CONFIG.API_ALERTS, { signal: abortCtrl.signal });
+    if (!r.ok) throw new Error("alerts "+r.status);
+    const data = await r.json();
+    syncAlertPolygons(data);
+    updateAlertBanner();
+    updateLiveBadge("ok");
+    backoffMs = 0;
+  } catch (e) {
+    if (e.name === "AbortError") return;
+    console.warn("alerts", e);
+    updateLiveBadge("err");
+    backoffMs = Math.min((backoffMs || CONFIG.MESSAGES_POLL_MS) * 2, 120000);
+  }
+}
+async function fetchMessages() {
+  try {
+    const r = await fetch(CONFIG.API_MESSAGES);
+    if (!r.ok) throw new Error("messages "+r.status);
+    const data = await r.json();
+    savedMessages = data.messages || [];
+    syncMessages(savedMessages);
+  } catch (e) {
+    console.warn("messages", e);
+  }
+}
+async function pollLoop() {
+  await fetchAlerts();
+  await fetchMessages();
+  const delay = backoffMs > 0 ? backoffMs : CONFIG.MESSAGES_POLL_MS;
+  pollTimer = setTimeout(pollLoop, delay);
+}
+function startPolling() {
+  if (pollTimer) clearTimeout(pollTimer);
+  pollLoop();
+}
+function stopPolling() {
+  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+  if (abortCtrl) { abortCtrl.abort(); abortCtrl = null; }
+}
+function updateLiveBadge(state) {
+  const badge = $("liveBadge");
+  if (!badge) return;
+  if (state === "ok") {
+    badge.textContent = "онлайн";
+    badge.classList.add("live");
+    badge.classList.remove("stale");
+  } else if (state === "err") {
+    badge.textContent = "ошибка";
+    badge.classList.remove("live");
+    badge.classList.add("stale");
+  }
+}
+
+/* ============================================================
+   UI
+============================================================ */
+$("btnRefresh").addEventListener("click", () => {
+  backoffMs = 0;
+  startPolling();
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) stopPolling();
+  else startPolling();
+});
+
+/* ============================================================
+   Старт
+============================================================ */
+(async function init() {
+  const ctrl = new AbortController();
+  loadAlertGeo(ctrl.signal);
+  showToast("Загрузка событий…");
+  startPolling();
+  // обновление счётчика «за час» каждые 60 сек (TTL-очистка)
+  setInterval(updateHourlyPanel, 60000);
+  setInterval(updateAlertBanner, 15000);
+})();
+</script>
+</body>
+</html>
